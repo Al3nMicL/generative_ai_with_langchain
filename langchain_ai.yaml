@@ -2,20 +2,11 @@ name: langchain_ai
 channels:
   - defaults
 dependencies:
-  - bzip2=1.0.8
+  - python=3.13
   - ca-certificates
-  - libffi=3.4.4
-  - ncurses=6.4
   - openssl
-  - python=3.10.12
-  - readline=8.2
-  - sqlite=3.41.2
-  - tk=8.6.12
-  - tzdata=2023c
-  - xz=5.4.2
-  - zlib=1.2.13
-  - pandoc=2.12
-  - pip=23.1.2
+  - pip>=24.0
+  - pandoc
   - pip:
     - -r requirements.txt
 prefix: /opt/anaconda3/envs/langchain_ai
