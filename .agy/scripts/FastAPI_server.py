@@ -86,10 +86,6 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 # background while the outer loop forwards tokens to the client as they
 # arrive.  Getting this wrong (e.g. awaiting the task first) will cause the
 # WebSocket to block until the full answer is ready.
-#
-# NOTE: invoke_task and astream() both invoke the chain independently.
-# invoke_task is kept to ensure the chain future is properly awaited and
-# cleaned up; astream() is what actually drives the token output.
 # ---------------------------------------------------------------------------
 @app.websocket("/ws")
 async def websocket_chat(websocket: WebSocket) -> None:
