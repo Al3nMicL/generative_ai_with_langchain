@@ -1,35 +1,29 @@
 """
-FastAPI server for chapter 9 — lanarky replacement.
+FastAPI server for chapter 9.
 
-Implements the same three endpoint flavors that lanarky's LangchainRouter
-used to generate automatically:
+Provides three endpoint flavors:
+  GET  /              — browser UI
   POST /chat          — synchronous (full response at once)
   POST /chat/stream   — HTTP streaming (text/event-stream)
   WS   /ws            — WebSocket, token-by-token streaming
-
-Requires:
-    pip install fastapi uvicorn python-dotenv langchain-openai langchain-core
 """
-import asyncio
+from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.templating import Jinja2Templates
 from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 load_dotenv()
 
-# ---------------------------------------------------------------------------
-# App & shared prompt template
-# ---------------------------------------------------------------------------
 app = FastAPI(title="LangChain chat service")
+templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
-# A minimal conversational prompt.
-# Swap system text or add MessagesPlaceholder("history") if you add memory.
 PROMPT = ChatPromptTemplate.from_messages(
     [
         ("system", "You are a helpful assistant."),
@@ -40,57 +34,60 @@ PROMPT = ChatPromptTemplate.from_messages(
 BASE_LLM_KWARGS = dict(model="gpt-3.5-turbo", temperature=0)
 
 
-# ---------------------------------------------------------------------------
-# Request schema
-# ---------------------------------------------------------------------------
 class ChatRequest(BaseModel):
-    input: str
+    message: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_message_alias(cls, values: object) -> object:
+        if isinstance(values, dict) and "message" not in values and "input" in values:
+            values["message"] = values["input"]
+        return values
 
 
-# ---------------------------------------------------------------------------
-# 1.  POST /chat  — synchronous, full response
-# ---------------------------------------------------------------------------
+def build_chain(*, streaming: bool):
+    return PROMPT | ChatOpenAI(streaming=streaming, **BASE_LLM_KWARGS) | StrOutputParser()
+
+
+def build_messages(message: str) -> dict:
+    return {"messages": [HumanMessage(content=message)]}
+
+
+def format_sse_data(chunk: str, *, event: str | None = None) -> str:
+    normalized = chunk.replace("\r\n", "\n").replace("\r", "\n")
+    lines = normalized.split("\n")
+    event_line = f"event: {event}\n" if event else ""
+    data_lines = "".join(f"data: {line}\n" for line in lines)
+    return f"{event_line}{data_lines}\n"
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request) -> HTMLResponse:
+    """Serve the browser chat UI."""
+    return templates.TemplateResponse(request, "index.html")
+
+
 @app.post("/chat")
 async def chat(request: ChatRequest) -> dict:
     """Return the full LLM response in one shot."""
-    chain = PROMPT | ChatOpenAI(**BASE_LLM_KWARGS) | StrOutputParser()
-    response = await chain.ainvoke(
-        {"messages": [HumanMessage(content=request.input)]}
-    )
+    response = await build_chain(streaming=False).ainvoke(build_messages(request.message))
     return {"response": response}
 
 
-# ---------------------------------------------------------------------------
-# 2.  POST /chat/stream  — HTTP streaming (text/event-stream)
-# ---------------------------------------------------------------------------
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest) -> StreamingResponse:
-    """Stream tokens back over HTTP as plain text chunks."""
-    chain = PROMPT | ChatOpenAI(streaming=True, **BASE_LLM_KWARGS) | StrOutputParser()
+    """Stream tokens back over HTTP using SSE framing."""
+    chain = build_chain(streaming=True)
 
     async def token_generator():
-        async for chunk in chain.astream(
-            {"messages": [HumanMessage(content=request.input)]}
-        ):
+        async for chunk in chain.astream(build_messages(request.message)):
             if chunk:
-                yield chunk
+                yield format_sse_data(chunk)
+        yield format_sse_data("[DONE]", event="end")
 
     return StreamingResponse(token_generator(), media_type="text/event-stream")
 
 
-# ---------------------------------------------------------------------------
-# 3.  WS /ws  — WebSocket, token-by-token streaming
-#
-# Concurrency note: we need to *run* the chain and *consume* its output at
-# the same time.  asyncio.create_task() lets the LLM invocation run in the
-# background while the outer loop forwards tokens to the client as they
-# arrive.  Getting this wrong (e.g. awaiting the task first) will cause the
-# WebSocket to block until the full answer is ready.
-#
-# NOTE: invoke_task and astream() both invoke the chain independently.
-# invoke_task is kept to ensure the chain future is properly awaited and
-# cleaned up; astream() is what actually drives the token output.
-# ---------------------------------------------------------------------------
 @app.websocket("/ws")
 async def websocket_chat(websocket: WebSocket) -> None:
     """Accept a text message per WebSocket frame; stream tokens back."""
@@ -98,45 +95,32 @@ async def websocket_chat(websocket: WebSocket) -> None:
     try:
         while True:
             user_input = await websocket.receive_text()
-
-            # Build a fresh chain per message so callbacks never bleed
-            # between requests (the old shared-ConversationChain anti-pattern).
-            chain = (
-                PROMPT
-                | ChatOpenAI(streaming=True, **BASE_LLM_KWARGS)
-                | StrOutputParser()
-            )
-
-            # Fire the chain as a background task so we can iterate tokens
-            # while it is still running.
-            invoke_task = asyncio.create_task(
-                chain.ainvoke({"messages": [HumanMessage(content=user_input)]})
-            )
-
-            # astream() yields string chunks directly through StrOutputParser.
-            async for token in chain.astream(
-                {"messages": [HumanMessage(content=user_input)]}
-            ):
-                if token:
-                    await websocket.send_text(token)
-
-            # Signal end-of-turn to the client.
-            await websocket.send_text("[DONE]")
-
-            # Ensure the background task is cleaned up even if astream
-            # finished first.
             try:
-                await invoke_task
-            except Exception:
-                pass
-
+                await websocket.send_json({"sender": "bot", "message_type": "start"})
+                async for token in build_chain(streaming=True).astream(
+                    build_messages(user_input)
+                ):
+                    if token:
+                        await websocket.send_json(
+                            {
+                                "sender": "bot",
+                                "message_type": "stream",
+                                "message": token,
+                            }
+                        )
+                await websocket.send_json({"sender": "bot", "message_type": "end"})
+            except Exception as exc:
+                await websocket.send_json(
+                    {
+                        "sender": "bot",
+                        "message_type": "error",
+                        "message": str(exc),
+                    }
+                )
     except WebSocketDisconnect:
-        pass
+        return
 
 
-# ---------------------------------------------------------------------------
-# Dev entrypoint
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
 
