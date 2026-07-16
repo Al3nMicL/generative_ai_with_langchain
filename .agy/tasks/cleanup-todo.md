@@ -58,7 +58,7 @@ incompatible with LangChain ≥1.x, and will cause an `ImportError` at runtime.
 
 The project already has a working reference implementation of the same pattern at
 [`chapter9/fastapi/main.py`](../chapter9/fastapi/main.py) — a pure FastAPI +
-LangChain streaming server using `AsyncIteratorCallbackHandler` and WebSockets.
+LangChain streaming server using LCEL (`chain.astream()`) and WebSockets.
 **Use that file as the implementation template.**
 
 ### Current behaviour of `chapter9/chat.py`
@@ -90,7 +90,7 @@ same route surface:
 | `/` | `GET` | Serve `chapter9/templates/index.html` via `Jinja2Templates` |
 | `/chat` | `POST` | Accept `{"message": "..."}` JSON body; return `{"response": "..."}` (non-streaming, `ChatOpenAI` invoke) |
 | `/chat_json` | `POST` | Same as `/chat` — this was lanarky's streaming_mode=2 which returned full JSON; keep as a plain invoke alias so existing callers don't break |
-| `/ws` | `WebSocket` | Stream tokens using `AsyncIteratorCallbackHandler` + `ChatOpenAI(streaming=True)` |
+| `/ws` | `WebSocket` | Stream tokens using `chain.astream()` + `ChatOpenAI(streaming=True)` |
 
 ### Constraints
 
@@ -127,7 +127,7 @@ kill %1
 fix(chapter9): replace lanarky with native FastAPI + LangChain streaming
 
 lanarky is unmaintained and incompatible with LangChain >=1.x.
-Reimplemented chat.py using AsyncIteratorCallbackHandler + WebSockets,
+Reimplemented chat.py using LCEL streaming (`chain.astream()`) + WebSockets,
 matching the pattern already used in chapter9/fastapi/main.py.
 
 Routes preserved: GET /, POST /chat, POST /chat_json, WS /ws.
