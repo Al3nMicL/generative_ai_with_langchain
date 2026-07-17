@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "grep": {
+      "type": "http",
+      "url": "https://server.smithery.ai/vercel/grep",
+      "tools": ["*"]
+    },
+    "upstash-context7-mcp": {
+      "type": "http",
+      "url": "https://server.smithery.ai/upstash/context7-mcp",
+      "tools": ["*"]
+    },
+    "vercel-grep": {
+      "type": "http",
+      "url": "https://server.smithery.ai/vercel/grep",
+      "tools": ["*"]
+    }
+  }
+}
