@@ -103,13 +103,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 | StrOutputParser()
             )
 
-            # Fire the chain as a background task so we can iterate tokens
-            # while it is still running.
-            invoke_task = asyncio.create_task(
-                chain.ainvoke({"messages": [HumanMessage(content=user_input)]})
-            )
-
-            # astream() yields string chunks directly through StrOutputParser.
+            # astream() both runs the model and yields streamed chunks through StrOutputParser.
             async for token in chain.astream(
                 {"messages": [HumanMessage(content=user_input)]}
             ):
@@ -118,13 +112,6 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
             # Signal end-of-turn to the client.
             await websocket.send_text("[DONE]")
-
-            # Ensure the background task is cleaned up even if astream
-            # finished first.
-            try:
-                await invoke_task
-            except Exception:
-                pass
 
     except WebSocketDisconnect:
         pass
