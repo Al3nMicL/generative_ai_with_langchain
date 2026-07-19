@@ -2,8 +2,8 @@
 # Keep any non-lint settings here
 # Same as Black.
 line-length = 99
-# Assume Python 3.11.
-target-version = "py311"
+# Assume Python 3.13.x
+target-version = "py313"
 # Exclude a variety of commonly ignored directories.
 exclude = [
     ".bzr",
